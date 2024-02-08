@@ -33,3 +33,6 @@ Data wrangling:
 4. Alpha/Beta diversity analysis, recommended to do on both QIIME2 and R (whole data set - 4 groups, and separated? - R filter, look at drug vs non-drugged. This process will depend on what our data shows/significance)
 5. Examining profiles - indicator taxa analysis → predicted profile of someone who takes drugs vs not, eczema etc…
 6. Core microbiome
+
+### Data wrangling
+- kept only non-smokers and cohort 2
