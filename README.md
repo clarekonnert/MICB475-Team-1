@@ -8,6 +8,7 @@ Discussion:
 - Using a statistical test to compare to see if there is a significant difference between the visual differences we are seeing
 - There is not much statistical difference
 - Control for age, sex, and BMI
+- There is a large difference between individuals in the same exprimental group
 
 ## Feb 29, 2024
 Completed deliverables:
