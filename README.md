@@ -5,7 +5,9 @@ Completed deliverables:
 Alpha diversity for MS type, sex, and eczema --> only MS type, and eczema showed a level of distinction
 
 Discussion:
-Using a statistical test to compare to see if there is a significant difference between the visual differences we are seeing
+- Using a statistical test to compare to see if there is a significant difference between the visual differences we are seeing
+- There is not much statistical difference
+- Control for age, sex, and BMI
 
 ## Feb 29, 2024
 Completed deliverables:
