@@ -1,13 +1,13 @@
 # MICB475-Team-1 Meeting Minutes and Agenda
 
-##Mar 7, 2024
+## Mar 7, 2024
 Completed deliverables:
 Alpha diversity for MS type, sex, and eczema --> only MS type, and eczema showed a level of distinction
 
 Discussion:
 Using a statistical test to compare to see if there is a significant difference between the visual differences we are seeing
 
-##Feb 29, 2024
+## Feb 29, 2024
 Completed deliverables:
 Alpha and beta diversity anysis: Completed upload to QIIME2 and data processing and trimming, alpha and beta diversity metrics showed no significant differences
 
