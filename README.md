@@ -1,5 +1,33 @@
 # MICB475-Team-1 Meeting Minutes and Agenda
 
+##Mar 7, 2024
+Completed deliverables:
+Alpha diversity for MS type, sex, and eczema --> only MS type, and eczema showed a level of distinction
+
+Discussion:
+Using a statistical test to compare to see if there is a significant difference between the visual differences we are seeing
+
+##Feb 29, 2024
+Completed deliverables:
+Alpha and beta diversity anysis: Completed upload to QIIME2 and data processing and trimming, alpha and beta diversity metrics showed no significant differences
+
+Discussion:
+Paper found significance in sex, age, and bmi
+Potentially could control for vitamin D supplementation as well
+
+Action Items:
+Filter for vitamin D supplementation (i.e 0)
+Further seggregation of experimental groups based on age, sex, and BMI
+
+## Feb 15, 2024
+Completed deliverables: 
+Data wrangling: Controlled for for Cohort 2 and non smokers, isolated for unique samples in the metadata, created an rx_meds column that is true and false
+
+Action Items:
+Create a new column combining the disease state annd eczema state (ex MS, eczema)
+Import dataset to QIIME2
+Complete alpha and beta diversity analysis
+
 ## Feb 8, 2024
 Paper and Metadata selected
 MICB 475 Project Paper
