@@ -1,5 +1,12 @@
 # MICB475-Team-1 Meeting Minutes and Agenda
 
+## Mar 14, 2024
+Completed Deliverables: Analyzed the different components discussed last meeting
+
+Discussion:
+- Eczema showed a mediating effect (because of significant difference between groups without eczema, but no effects seen when patients all had eczema)
+- Patients more susceptible to changes of the microbiome induced by over the counter medication
+
 ## Mar 7, 2024
 Completed deliverables:
 Alpha diversity for MS type, sex, and eczema --> only MS type, and eczema showed a level of distinction
