@@ -7,6 +7,13 @@ Discussion:
 - Eczema showed a mediating effect (because of significant difference between groups without eczema, but no effects seen when patients all had eczema)
 - Patients more susceptible to changes of the microbiome induced by over the counter medication
 
+Potential next steps
+- Compare OTC and RX medication effect on the diversity in the gut, and investigate the indicator species
+- Use a barplot or PCoA plot to look at whether there is general clustering and difference
+- alpha diversity through bar plots
+- beta diversity through PCoA and PERMANOVA
+- Look at indicator taxa and core microbiome analysis for specific groups that show most promise
+
 ## Mar 7, 2024
 Completed deliverables:
 Alpha diversity for MS type, sex, and eczema --> only MS type, and eczema showed a level of distinction
