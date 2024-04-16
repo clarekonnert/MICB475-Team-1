@@ -1,0 +1,935 @@
+---
+title: "MICB475"
+output: html_document
+date: "2024-03-05"
+---
+# Load libraries
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("phyloseq")
+```
+```{r}
+library(phyloseq)
+library(ape) 
+library(tidyverse)
+library(picante)
+library(ggpubr)
+library(ggforce)
+library(vegan)
+library(indicspecies)
+library(microbiome)
+library("sf")
+library(ggVennDiagram)
+```
+
+# Load data
+```{r}
+metafp <- "metadata_sampleid_household_dup.tsv"
+meta <- read_delim(metafp, delim="\t")
+
+otufp <- "feature-table.txt"
+otu <- read_delim(file = otufp, delim="\t", skip=1)
+
+taxfp <- "taxonomy.tsv"
+tax <- read_delim(taxfp, delim="\t")
+
+phylotreefp <- "tree.nwk"
+phylotree <- read.tree(phylotreefp)
+```
+
+# Processing into Phyloseq
+```{r}
+#otu file
+otu_mat <- as.matrix(otu[,-1])
+rownames(otu_mat) <- otu$`#OTU ID`
+OTU <- otu_table(otu_mat, taxa_are_rows = TRUE) 
+class(OTU)
+
+#metadata
+samp_df <- as.data.frame(meta[,-1])
+rownames(samp_df)<- meta$'sample-id'
+SAMP <- sample_data(samp_df)
+class(SAMP)
+
+#taxonomy file
+tax_mat <- tax %>% select(-Confidence)%>%
+  separate(col=Taxon, sep="; "
+           , into = c("Domain","Phylum","Class","Order","Family","Genus","Species")) %>%
+  as.matrix() 
+
+tax_mat <- tax_mat[,-1]
+rownames(tax_mat) <- tax$`Feature ID`
+TAX <- tax_table(tax_mat)
+class(TAX)
+```
+
+# Combine, filter and rarefaction
+```{r}
+# Combine
+ms <- phyloseq(OTU, SAMP, TAX, phylotree)
+
+# Filter 
+ms_filt <- subset_taxa(ms,  Domain == "d__Bacteria" & Class!="c__Chloroplast" & Family !="f__Mitochondria")
+
+# Rarification
+rarecurve(t(as.data.frame(otu_table(ms_filt))), cex=0.1)
+ms_rare <- rarefy_even_depth(ms_filt, rngseed = 1, sample.size = 8788)
+
+# more filtering
+min_age <- 20
+max_age <- 50
+
+ms_rare_filtered <- subset_samples(ms_rare, age >= min_age & age <= max_age)
+```
+
+# Change numeric data to words
+```{r}
+sample_data <- sample_data(ms_rare_filtered)
+sample_data$eczema_words <- ifelse(sample_data$eczema == 1, "eczema", "no eczema")
+sample_data(ms_rare_filtered) <- sample_data
+
+sample_data <- sample_data(ms_rare_filtered)
+sample_data$otc_meds_numeric <- ifelse(sample_data$otc_meds == "Yes", 1, 0)
+sample_data(ms_rare_filtered) <- sample_data
+
+sample_data <- sample_data(ms_rare_filtered)
+sample_data$prescription <- ifelse(sample_data$rxmeds == 2, "No", "Yes")
+sample_data(ms_rare_filtered) <- sample_data
+
+sample_data <- sample_data(ms_rare_filtered)
+sample_data$prescription_numeric <- ifelse(sample_data$rxmeds == 2, 0, 1)
+sample_data(ms_rare_filtered) <- sample_data
+```
+
+# Alpha diversity
+
+## SF1
+```{r}
+## MS patients, looking at impact of eczema ##
+# Subsetting for MS #
+ms_rare_filtered_subset_ms <- subset_samples(ms_rare_filtered, disease == "MS")
+ms_rare_filtered_subset_ms <- subset_samples(ms_rare_filtered_subset_ms, !is.na(sample_data(ms_rare_filtered_subset_ms)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_ms)$otc_med))
+
+# Create new column for eczema status #
+metadata_ms_rare_filtered_subset_ms <- sample_data(ms_rare_filtered_subset_ms)
+metadata_ms_rare_filtered_subset_ms$eczema_status <- ifelse(metadata_ms_rare_filtered_subset_ms$eczema == 1, "eczema", "no eczema")
+sample_data(ms_rare_filtered_subset_ms) <- metadata_ms_rare_filtered_subset_ms
+
+# Alpha Diversity #
+gg_richness_ms_eczema <- plot_richness(ms_rare_filtered_subset_ms, x = "eczema_status", measures = c("Shannon","Observed")) +
+  xlab("Eczema Status") +
+  geom_boxplot(aes(group = eczema_status))
+gg_richness_ms_eczema
+
+# Statistical Analysis #
+samp_dat_wdiv_1 <- data.frame(sample_data(ms_rare_filtered_subset_ms), estimate_richness(ms_rare_filtered_subset_ms))
+wilcox.test(Shannon ~ eczema_status, data=samp_dat_wdiv_1)
+wilcox.test(Observed ~ eczema_status, data=samp_dat_wdiv_1)
+
+## Control (non-MS), looking at impact of eczema ##
+# Subsetting for No MS #
+ms_rare_filtered_subset_no_ms <- subset_samples(ms_rare_filtered, disease == "Control")
+ms_rare_filtered_subset_no_ms <- subset_samples(ms_rare_filtered_subset_no_ms, !is.na(sample_data(ms_rare_filtered_subset_no_ms)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_no_ms)$otc_med))
+
+# Create new column for eczema status #
+metadata_ms_rare_filtered_subset_no_ms <- sample_data(ms_rare_filtered_subset_no_ms)
+metadata_ms_rare_filtered_subset_no_ms$eczema_status <- ifelse(metadata_ms_rare_filtered_subset_no_ms$eczema == 1, "eczema", "no eczema")
+sample_data(ms_rare_filtered_subset_no_ms) <- metadata_ms_rare_filtered_subset_no_ms
+
+# Alpha Diversity #
+gg_richness_no_ms <- plot_richness(ms_rare_filtered_subset_no_ms, x = "eczema_status", measures = c("Shannon","Observed")) +
+  xlab("Eczema Status") +
+  geom_boxplot(aes(group = eczema_status))
+gg_richness_no_ms
+
+# Statistical Analysis #
+samp_dat_wdiv_2 <- data.frame(sample_data(ms_rare_filtered_subset_no_ms), estimate_richness(ms_rare_filtered_subset_no_ms))
+wilcox.test(Shannon ~ eczema_status, data=samp_dat_wdiv_2)
+wilcox.test(Observed ~ eczema_status, data=samp_dat_wdiv_2)
+
+## Eczema patients, looking at impact of disease ##
+# Subset for Eczema Patients #
+ms_rare_filtered_subset_eczema <- subset_samples(ms_rare_filtered, eczema == "1")
+ms_rare_filtered_subset_eczema <- subset_samples(ms_rare_filtered_subset_eczema, !is.na(sample_data(ms_rare_filtered_subset_eczema)$disease) & !is.na(sample_data(ms_rare_filtered_subset_eczema)$otc_med))
+
+# Alpha Diversity #
+gg_richness_eczema_ms <- plot_richness(ms_rare_filtered_subset_eczema, x = "disease", measures = c("Shannon","Observed")) +
+  xlab("Disease Status") +
+  geom_boxplot(aes(group = disease))
+gg_richness_eczema_ms
+
+# Statistical Analysis #
+samp_dat_wdiv_3 <- data.frame(sample_data(ms_rare_filtered_subset_eczema), estimate_richness(ms_rare_filtered_subset_eczema))
+wilcox.test(Shannon ~ disease, data=samp_dat_wdiv_3, exact = FALSE)
+wilcox.test(Observed ~ disease, data=samp_dat_wdiv_3, exact = FALSE)
+
+## Non-eczema patients, looking at impact of disease ##
+# Subset for Non Eczema Individuals #
+ms_rare_filtered_subset_no_eczema <- subset_samples(ms_rare_filtered, eczema == "0")
+ms_rare_filtered_subset_no_eczema <- subset_samples(ms_rare_filtered_subset_no_eczema, !is.na(sample_data(ms_rare_filtered_subset_no_eczema)$disease) & !is.na(sample_data(ms_rare_filtered_subset_no_eczema)$otc_med))
+
+# Alpha Diversity #
+gg_richness_no_eczema_ms <- plot_richness(ms_rare_filtered_subset_no_eczema, x = "disease", measures = c("Shannon","Observed")) +
+  xlab("Disease Status") +
+  geom_boxplot(aes(group = disease))
+gg_richness_no_eczema_ms
+
+# Statistical Analysis #
+samp_dat_wdiv_4 <- data.frame(sample_data(ms_rare_filtered_subset_no_eczema), estimate_richness(ms_rare_filtered_subset_no_eczema))
+wilcox.test(Shannon ~ disease, data=samp_dat_wdiv_4, exact = FALSE)
+wilcox.test(Observed ~ disease, data=samp_dat_wdiv_4, exact = FALSE)
+```
+
+## SF2
+```{r}
+## MS Patients taking prescription medication, looking at effect of OTC ##
+# Subsetting for Prescription Status #
+ms_rare_filtered_subset_treatment <- subset_samples(ms_rare_filtered, disease == "MS" & rxmeds == "1")
+ms_rare_filtered_subset_treatment <- subset_samples(ms_rare_filtered_subset_treatment, !is.na(sample_data(ms_rare_filtered_subset_treatment)$disease) & !is.na(sample_data(ms_rare_filtered_subset_treatment)$otc_med))
+
+# Generate New Column for OTC Medication #
+metadata_ms_rare_filtered_subset_treatment <- sample_data(ms_rare_filtered_subset_treatment)
+metadata_ms_rare_filtered_subset_treatment$otc_name <- ifelse(metadata_ms_rare_filtered_subset_treatment$otc_meds == "Yes", "OTC", "No OTC")
+sample_data(ms_rare_filtered_subset_treatment) <- metadata_ms_rare_filtered_subset_treatment
+
+# Alpha Diversity #
+gg_richness_treatment_otc <- plot_richness(ms_rare_filtered_subset_treatment, x = "otc_name", measures = c("Shannon","Observed")) +
+  xlab("OTC Medication Status") +
+  geom_boxplot(aes(group = otc_name))
+gg_richness_treatment_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_5 <- data.frame(sample_data(ms_rare_filtered_subset_treatment), estimate_richness(ms_rare_filtered_subset_treatment))
+wilcox.test(Shannon ~ otc_name, data=samp_dat_wdiv_5, exact = FALSE)
+wilcox.test(Observed ~ otc_name, data=samp_dat_wdiv_5, exact = FALSE)
+
+## MS Patients NOT taking prescription medication, looking at effect of OTC ##
+# Subsetting for Prescription Status - No Prescription #
+ms_rare_filtered_subset_no_treatment <- subset_samples(ms_rare_filtered, rxmeds == "2" & disease == "MS")
+ms_rare_filtered_subset_no_treatment <- subset_samples(ms_rare_filtered_subset_no_treatment, !is.na(sample_data(ms_rare_filtered_subset_no_treatment)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_no_treatment)$otc_med))
+
+# Generate New Column for OTC Medication #
+metadata_ms_rare_filtered_subset_no_treatment <- sample_data(ms_rare_filtered_subset_no_treatment)
+metadata_ms_rare_filtered_subset_no_treatment$otc_name <- ifelse(metadata_ms_rare_filtered_subset_no_treatment$otc_meds == "Yes", "OTC", "No OTC")
+sample_data(ms_rare_filtered_subset_no_treatment) <- metadata_ms_rare_filtered_subset_no_treatment
+
+# Alpha Diversity #
+gg_richness_no_treatment_otc <- plot_richness(ms_rare_filtered_subset_no_treatment, x = "otc_name", measures = c("Shannon", "Observed")) +
+  xlab("OTC Medication Status") +
+  geom_boxplot(aes(group = otc_name))
+gg_richness_no_treatment_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_6 <- data.frame(sample_data(ms_rare_filtered_subset_no_treatment), estimate_richness(ms_rare_filtered_subset_no_treatment))
+wilcox.test(Shannon ~ otc_name, data=samp_dat_wdiv_6, exact = FALSE)
+wilcox.test(Observed ~ otc_name, data=samp_dat_wdiv_6, exact = FALSE)
+
+## MS Patients taking OTC medication, looking at effect of prescription medication ##
+# Subsetting for OTC Medication Status - Taking OTC #
+ms_rare_filtered_subset_otc <- subset_samples(ms_rare_filtered, otc_meds == "Yes" & disease == "MS")
+ms_rare_filtered_subset_otc <- subset_samples(ms_rare_filtered_subset_otc, !is.na(sample_data(ms_rare_filtered_subset_otc)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_otc)$otc_med))
+
+# Create new column for prescription status #
+metadata_ms_rare_filtered_otc <- sample_data(ms_rare_filtered_subset_otc)
+metadata_ms_rare_filtered_otc$prescription_status <- ifelse(metadata_ms_rare_filtered_otc$rxmeds == 1, "Prescription", "No Prescription")
+sample_data(ms_rare_filtered_subset_otc) <- metadata_ms_rare_filtered_otc
+
+# Alpha Diversity #
+gg_richness_otc <- plot_richness(ms_rare_filtered_subset_otc, x = "prescription_status", measures = c("Shannon", "Observed")) +
+  xlab("Prescription Medication Status") +
+  geom_boxplot(aes(group = prescription_status))
+gg_richness_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_7 <- data.frame(sample_data(ms_rare_filtered_subset_otc), estimate_richness(ms_rare_filtered_subset_otc))
+wilcox.test(Shannon ~ prescription_status, data=samp_dat_wdiv_7, exact = FALSE)
+wilcox.test(Observed ~ prescription_status, data=samp_dat_wdiv_7, exact = FALSE)
+
+## MS Patients NOT taking OTC medication, looking at effect of prescription medication ##
+# Subsetting for OTC Medication Status - Not Taking OTC #
+ms_rare_filtered_subset_no_otc <- subset_samples(ms_rare_filtered, otc_meds == "No" & disease == "MS")
+ms_rare_filtered_subset_no_otc <- subset_samples(ms_rare_filtered_subset_no_otc, !is.na(sample_data(ms_rare_filtered_subset_no_otc)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_no_otc)$otc_med))
+
+# Create new column for prescription status #
+metadata_ms_rare_filtered_no_otc <- sample_data(ms_rare_filtered_subset_no_otc)
+metadata_ms_rare_filtered_no_otc$prescription_status <- ifelse(metadata_ms_rare_filtered_no_otc$rxmeds == 1, "Prescription", "No Prescription")
+sample_data(ms_rare_filtered_subset_no_otc) <- metadata_ms_rare_filtered_no_otc
+
+# Alpha Diversity #
+gg_richness_no_otc <- plot_richness(ms_rare_filtered_subset_no_otc, x = "prescription_status", measures = c("Shannon","Observed")) +
+  xlab("Prescription Medication Status") +
+  geom_boxplot(aes(group = prescription_status))
+gg_richness_no_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_8 <- data.frame(sample_data(ms_rare_filtered_subset_no_otc), estimate_richness(ms_rare_filtered_subset_no_otc))
+wilcox.test(Shannon ~ prescription_status, data=samp_dat_wdiv_8, exact = FALSE)
+wilcox.test(Observed ~ prescription_status, data=samp_dat_wdiv_8, exact = FALSE)
+```
+
+## SF4
+```{r}
+## MS Patients taking prescription medication, looking at effect of OTC ##
+# Subsetting for Prescription Status #
+ms_rare_filtered_subset_treatment <- subset_samples(ms_rare_filtered, disease == "MS" & rxmeds == "1")
+ms_rare_filtered_subset_treatment <- subset_samples(ms_rare_filtered_subset_treatment, !is.na(sample_data(ms_rare_filtered_subset_treatment)$disease) & !is.na(sample_data(ms_rare_filtered_subset_treatment)$otc_med))
+
+# Generate New Column for OTC Medication #
+metadata_ms_rare_filtered_subset_treatment <- sample_data(ms_rare_filtered_subset_treatment)
+metadata_ms_rare_filtered_subset_treatment$otc_name <- ifelse(metadata_ms_rare_filtered_subset_treatment$otc_meds == "Yes", "OTC", "No OTC")
+sample_data(ms_rare_filtered_subset_treatment) <- metadata_ms_rare_filtered_subset_treatment
+
+# Alpha Diversity #
+gg_richness_treatment_otc <- plot_richness(ms_rare_filtered_subset_treatment, x = "otc_name", measures = c("Shannon","Observed")) +
+  xlab("OTC Medication Status") +
+  geom_boxplot(aes(group = otc_name))
+gg_richness_treatment_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_5 <- data.frame(sample_data(ms_rare_filtered_subset_treatment), estimate_richness(ms_rare_filtered_subset_treatment))
+wilcox.test(Shannon ~ otc_name, data=samp_dat_wdiv_5, exact = FALSE)
+wilcox.test(Observed ~ otc_name, data=samp_dat_wdiv_5, exact = FALSE)
+
+## MS Patients NOT taking prescription medication, looking at effect of OTC ##
+# Subsetting for Prescription Status - No Prescription #
+ms_rare_filtered_subset_no_treatment <- subset_samples(ms_rare_filtered, rxmeds == "2" & disease == "MS")
+ms_rare_filtered_subset_no_treatment <- subset_samples(ms_rare_filtered_subset_no_treatment, !is.na(sample_data(ms_rare_filtered_subset_no_treatment)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_no_treatment)$otc_med))
+
+# Generate New Column for OTC Medication #
+metadata_ms_rare_filtered_subset_no_treatment <- sample_data(ms_rare_filtered_subset_no_treatment)
+metadata_ms_rare_filtered_subset_no_treatment$otc_name <- ifelse(metadata_ms_rare_filtered_subset_no_treatment$otc_meds == "Yes", "OTC", "No OTC")
+sample_data(ms_rare_filtered_subset_no_treatment) <- metadata_ms_rare_filtered_subset_no_treatment
+
+# Alpha Diversity #
+gg_richness_no_treatment_otc <- plot_richness(ms_rare_filtered_subset_no_treatment, x = "otc_name", measures = c("Shannon", "Observed")) +
+  xlab("OTC Medication Status") +
+  geom_boxplot(aes(group = otc_name))
+gg_richness_no_treatment_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_6 <- data.frame(sample_data(ms_rare_filtered_subset_no_treatment), estimate_richness(ms_rare_filtered_subset_no_treatment))
+wilcox.test(Shannon ~ otc_name, data=samp_dat_wdiv_6, exact = FALSE)
+wilcox.test(Observed ~ otc_name, data=samp_dat_wdiv_6, exact = FALSE)
+
+## MS Patients taking OTC medication, looking at effect of prescription medication ##
+# Subsetting for OTC Medication Status - Taking OTC #
+ms_rare_filtered_subset_otc <- subset_samples(ms_rare_filtered, otc_meds == "Yes" & disease == "MS")
+ms_rare_filtered_subset_otc <- subset_samples(ms_rare_filtered_subset_otc, !is.na(sample_data(ms_rare_filtered_subset_otc)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_otc)$otc_med))
+
+# Create new column for prescription status #
+metadata_ms_rare_filtered_otc <- sample_data(ms_rare_filtered_subset_otc)
+metadata_ms_rare_filtered_otc$prescription_status <- ifelse(metadata_ms_rare_filtered_otc$rxmeds == 1, "Prescription", "No Prescription")
+sample_data(ms_rare_filtered_subset_otc) <- metadata_ms_rare_filtered_otc
+
+# Alpha Diversity #
+gg_richness_otc <- plot_richness(ms_rare_filtered_subset_otc, x = "prescription_status", measures = c("Shannon", "Observed")) +
+  xlab("Prescription Medication Status") +
+  geom_boxplot(aes(group = prescription_status))
+gg_richness_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_7 <- data.frame(sample_data(ms_rare_filtered_subset_otc), estimate_richness(ms_rare_filtered_subset_otc))
+wilcox.test(Shannon ~ prescription_status, data=samp_dat_wdiv_7, exact = FALSE)
+wilcox.test(Observed ~ prescription_status, data=samp_dat_wdiv_7, exact = FALSE)
+
+## MS Patients NOT taking OTC medication, looking at effect of prescription medication ##
+# Subsetting for OTC Medication Status - Not Taking OTC #
+ms_rare_filtered_subset_no_otc <- subset_samples(ms_rare_filtered, otc_meds == "No" & disease == "MS")
+ms_rare_filtered_subset_no_otc <- subset_samples(ms_rare_filtered_subset_no_otc, !is.na(sample_data(ms_rare_filtered_subset_no_otc)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_no_otc)$otc_med))
+
+# Create new column for prescription status #
+metadata_ms_rare_filtered_no_otc <- sample_data(ms_rare_filtered_subset_no_otc)
+metadata_ms_rare_filtered_no_otc$prescription_status <- ifelse(metadata_ms_rare_filtered_no_otc$rxmeds == 1, "Prescription", "No Prescription")
+sample_data(ms_rare_filtered_subset_no_otc) <- metadata_ms_rare_filtered_no_otc
+
+# Alpha Diversity #
+gg_richness_no_otc <- plot_richness(ms_rare_filtered_subset_no_otc, x = "prescription_status", measures = c("Shannon","Observed")) +
+  xlab("Prescription Medication Status") +
+  geom_boxplot(aes(group = prescription_status))
+gg_richness_no_otc
+
+# Statistical Analysis #
+samp_dat_wdiv_8 <- data.frame(sample_data(ms_rare_filtered_subset_no_otc), estimate_richness(ms_rare_filtered_subset_no_otc))
+wilcox.test(Shannon ~ prescription_status, data=samp_dat_wdiv_8, exact = FALSE)
+wilcox.test(Observed ~ prescription_status, data=samp_dat_wdiv_8, exact = FALSE)
+```
+
+# Beta diversity
+
+## Figure 1
+```{r}
+# subset
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered,
+                                           !is.na(sample_data(ms_rare_filtered)$eczema_words) &
+                                           !is.na(sample_data(ms_rare_filtered)$disease))
+
+# pca plots
+bray <- distance(ms_rare_filtered_subset, method="bray") 
+pcoa_bray <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=bray)
+left <- plot_ordination(ms_rare_filtered_subset, pcoa_bray, shape = "disease", color = "eczema_words") +
+  labs(shape = "Disease status", color = "Eczema status", 
+  title = "Bray-Curtis method: \n
+    MS vs Control, eczema group: p = 0.396 \n
+    MS vs Control, no eczema group: p = 0.006 \n") +
+  theme(text = element_text(size = 14)) +
+  geom_mark_ellipse(aes(filter = disease == "MS"), linetype = "solid", linewidth = 1) +
+  geom_mark_ellipse(aes(filter = disease == "Control"), linetype = "dashed", linewidth = 1) +
+  coord_cartesian(xlim = c(-0.3, 0.74), ylim = c(-0.5, 0.4))
+
+jaccard <- distance(ms_rare_filtered_subset, method="jaccard")
+pcoa_jaccard <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=jaccard)
+right <- plot_ordination(ms_rare_filtered_subset, pcoa_jaccard, shape = "disease", color = "eczema_words") +
+  labs(shape = "Disease status", color = "Eczema status",   
+  title = "Jaccard method: \n
+    MS vs Control, eczema group: p = 0.477 \n
+    MS vs Control, no eczema group: p = 0.004 \n")  +
+  theme(text = element_text(size = 14)) +
+  geom_mark_ellipse(aes(filter = disease == "MS"), linetype = "solid", linewidth = 1) +
+  geom_mark_ellipse(aes(filter = disease == "Control"), linetype = "dashed", linewidth = 1) +
+  coord_cartesian(xlim = c(-0.3, 0.6), ylim = c(-0.4, 0.4))
+
+plot <- ggarrange(left,right,ncol=2,nrow=1)
+```
+
+## Figure 2
+```{r}
+# subset for top row
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, prescription == "No") # not taking prescription
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, disease == "MS")
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, !is.na(sample_data(ms_rare_filtered_subset)$otc_meds))
+
+# pca plots top
+bray <- distance(ms_rare_filtered_subset, method="bray") 
+pcoa_bray <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=bray)
+top_left <- plot_ordination(ms_rare_filtered_subset, pcoa_bray, color = "otc_meds") +
+    labs(title = "Bray-Curtis Method: MS + No Prescription Medication", color = "OTC Medication")  +
+    theme(text = element_text(size = 14)) +
+    geom_mark_ellipse(aes(filter = otc_meds != "Yes")) +
+    geom_mark_ellipse(aes(filter = otc_meds != "No")) +
+    coord_cartesian(xlim = c(-0.3, 0.6), ylim = c(-0.6, 0.4))
+
+jaccard <- distance(ms_rare_filtered_subset, method="jaccard")
+pcoa_jaccard <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=jaccard)
+top_right <- plot_ordination(ms_rare_filtered_subset, pcoa_jaccard, color = "otc_meds") +
+  labs(title = "Jaccard Method: MS + No Prescription Medication", color = "OTC Medication")  +
+    theme(text = element_text(size = 14)) +
+    geom_mark_ellipse(aes(filter = otc_meds != "Yes")) +
+    geom_mark_ellipse(aes(filter = otc_meds != "No")) +
+    coord_cartesian(xlim = c(-0.3, 0.6), ylim = c(-0.6, 0.6))
+
+# subset for bottom row
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, otc_meds == "No")
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, disease == "MS")
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, !is.na(sample_data(ms_rare_filtered_subset)$prescription))
+
+# pca plots top
+bray <- distance(ms_rare_filtered_subset, method="bray") 
+pcoa_bray <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=bray)
+bottom_left <- plot_ordination(ms_rare_filtered_subset, pcoa_bray, color = "prescription") +
+    labs(title = "Bray-Curtis Method: MS + No OTC Medication", color = "Prescription Medication")  +
+    theme(text = element_text(size = 14)) +
+    geom_mark_ellipse(aes(filter = prescription != "Yes")) +
+    geom_mark_ellipse(aes(filter = prescription != "No")) +
+    coord_cartesian(xlim = c(-0.4, 0.6), ylim = c(-0.5, 0.4))
+
+jaccard <- distance(ms_rare_filtered_subset, method="jaccard")
+pcoa_jaccard <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=jaccard)
+bottom_right <- plot_ordination(ms_rare_filtered_subset, pcoa_jaccard, color = "prescription") +
+  labs(title = "Jaccard Method: MS + No OTC Medication", color = "Prescription Medication") +
+    theme(text = element_text(size = 14)) +
+    geom_mark_ellipse(aes(filter = prescription != "Yes")) +
+    geom_mark_ellipse(aes(filter = prescription != "No")) +
+    coord_cartesian(xlim = c(-0.4, 0.6), ylim = c(-0.5, 0.3))
+
+# Combine pca plots
+plot <- ggarrange(top_left, top_right, bottom_left, bottom_right, nrow = 2, ncol=2)
+```
+
+## Figure S3 <- work on this
+```{r}
+# subset
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, otc_meds == "No") # not taking otc medication
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, disease == "MS")
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, !is.na(sample_data(ms_rare_filtered_subset)$eczema_words) &                                                         !is.na(sample_data(ms_rare_filtered_subset)$prescription))
+
+bray <- distance(ms_rare_filtered_subset, method="bray") 
+pcoa_bray <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=bray)
+left <- plot_ordination(ms_rare_filtered_subset, pcoa_bray, shape ="eczema_words", color = "prescription") +
+    labs(shape = "Eczema status", color = "Prescription Medication",
+    title = "Bray-Curtis Method: \n
+         Prescription vs No prescription, eczema group: p = 0.788 \n
+         Prescription vs No prescription, no eczema group: p = 0.878")  +
+    geom_mark_ellipse(aes(filter = eczema_words == "eczema"), linetype = "dashed", linewidth = 1) +
+    geom_mark_ellipse(aes(filter = eczema_words == "no eczema"), linetype = "solid", linewidth = 1) +
+    coord_cartesian(xlim = c(-0.4, 0.6), ylim = c(-0.6, 0.4))
+    
+jaccard <- distance(ms_rare_filtered_subset, method="jaccard")
+pcoa_jaccard <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=jaccard)
+right <- plot_ordination(ms_rare_filtered_subset, pcoa_jaccard, shape = "eczema_words", color = "prescription") +
+    labs(shape = "Eczema status", color = "Prescription Medication",
+         title = "Jaccard Method: \n
+         Prescription vs No prescription, eczema group: p = 0.697 \n
+         Prescription vs No prescription, no eczema group: p = 0.875") +
+    geom_mark_ellipse(aes(filter = eczema_words == "eczema"), linetype = "dashed", linewidth = 1) +
+    geom_mark_ellipse(aes(filter = eczema_words == "no eczema"), linetype = "solid", linewidth = 1) +
+    coord_cartesian(xlim = c(-0.4, 0.6), ylim = c(-0.6, 0.4))
+
+plot <- ggarrange(left,right,nrow=1,ncol=2)
+```
+
+## Figure 3
+```{r}
+# subset
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, prescription == "No")
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, disease == "MS")
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, !is.na(sample_data(ms_rare_filtered_subset)$eczema_words) &                                                         !is.na(sample_data(ms_rare_filtered_subset)$otc_meds))
+
+# no eczema plots
+bray <- distance(ms_rare_filtered_subset, method="bray") 
+pcoa_bray <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=bray)
+left <- plot_ordination(ms_rare_filtered_subset, pcoa_bray, shape ="eczema_words", color = "otc_meds") +
+    labs(title = "Bray-Curtis Method: \n
+         OTC vs Non-OTC, eczema group: p = 0.33 \n
+         OTC vs Non-OTC, no eczema group: p = 0.036", shape = "Eczema status", color = "OTC Medication") +
+      theme(text = element_text(size = 14)) +
+    geom_mark_ellipse(aes(filter = eczema_words == "eczema"), linetype = "dashed", linewidth = 1) +
+    geom_mark_ellipse(aes(filter = eczema_words == "no eczema"), linetype = "solid", linewidth = 1) +
+    coord_cartesian(xlim = c(-0.4, 0.6), ylim = c(-0.6, 0.4))
+    
+jaccard <- distance(ms_rare_filtered_subset, method="jaccard")
+pcoa_jaccard <- ordinate(ms_rare_filtered_subset, method="PCoA", distance=jaccard)
+right <- plot_ordination(ms_rare_filtered_subset, pcoa_jaccard, shape = "eczema_words", color = "otc_meds") +
+    labs(title = "Jaccard Method: \n 
+         OTC vs Non-OTC, eczema group: p = 0.278 \n
+         OTC vs Non-OTC, no eczema group: p = 0.050", shape = "Eczema status", color = "OTC Medication") +
+          theme(text = element_text(size = 14)) +
+    geom_mark_ellipse(aes(filter = eczema_words == "eczema"), linetype = "dashed", linewidth = 1) +
+    geom_mark_ellipse(aes(filter = eczema_words == "no eczema"), linetype = "solid", linewidth = 1) +
+    coord_cartesian(xlim = c(-0.4, 0.6), ylim = c(-0.6, 0.4))
+
+plot <- ggarrange(left,right,nrow=1,ncol=2)
+```
+
+
+# Beta diveristy PERMENOVA analysis
+
+## F1 MS patients subset
+```{r}
+#subset data
+ms_rare_filtered_subset_ms <- subset_samples(ms_rare_filtered, disease == "MS")
+ms_rare_filtered_subset_ms <- subset_samples(ms_rare_filtered_subset_ms, !is.na(sample_data(ms_rare_filtered_subset_ms)$eczema_words) & !is.na(sample_data(ms_rare_filtered_subset_ms)$otc_meds))
+
+# stats
+samp_dat_wdiv_ms <- data.frame(sample_data(ms_rare_filtered_subset_ms), estimate_richness(ms_rare_filtered_subset_ms))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset_ms, weighted=TRUE)
+adonis2(dm_unifrac ~ `eczema`*eczema, data=samp_dat_wdiv_ms)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset_ms)), method="bray")
+adonis2(dm_bray ~ `eczema`*eczema, data=samp_dat_wdiv_ms) 
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset_ms)), method="jaccard")
+adonis2(dm_jaccard ~ `eczema`*eczema, data=samp_dat_wdiv_ms) 
+
+# no significant differences with any of the data
+```
+
+## F1 Control patients subset
+```{r}
+#subset data
+ms_rare_filtered_subset_control <- subset_samples(ms_rare_filtered, disease == "Control")
+ms_rare_filtered_subset_control <- subset_samples(ms_rare_filtered_subset_control, !is.na(sample_data(ms_rare_filtered_subset_control)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_control)$otc_meds))
+
+# stats
+samp_dat_wdiv_ms <- data.frame(sample_data(ms_rare_filtered_subset_control), estimate_richness(ms_rare_filtered_subset_control))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset_control, weighted=TRUE)
+adonis2(dm_unifrac ~ `eczema`*otc_meds, data=samp_dat_wdiv_ms)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset_control)), method="bray")
+adonis2(dm_bray ~ `eczema`*otc_meds, data=samp_dat_wdiv_ms) 
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset_control)), method="jaccard")
+adonis2(dm_jaccard ~ `eczema`*otc_meds, data=samp_dat_wdiv_ms) 
+
+# no signficant differences with any of the data
+```
+
+## F1 Eczema subset
+```{r}
+#subset data
+ms_rare_filtered_subset_eczema <- subset_samples(ms_rare_filtered, eczema == "1")
+ms_rare_filtered_subset_eczema <- subset_samples(ms_rare_filtered_subset_eczema, !is.na(sample_data(ms_rare_filtered_subset_eczema)$eczema) & !is.na(sample_data(ms_rare_filtered_subset_eczema)$otc_meds)) 
+
+# stats 
+samp_dat_wdiv_eczema <- data.frame(sample_data(ms_rare_filtered_subset_eczema), estimate_richness(ms_rare_filtered_subset_eczema))
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset_eczema)), method="bray")
+adonis2(dm_bray ~ `disease`*otc_meds, data=samp_dat_wdiv_eczema)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset_eczema)), method="jaccard")
+adonis2(dm_jaccard ~ `disease`*otc_meds, data=samp_dat_wdiv_eczema)
+
+# no signficant differences with any of the data
+```
+
+## F1 Non-eczema subset
+```{r}
+#subset data
+ms_rare_filtered_subset_no_eczema <- subset_samples(ms_rare_filtered, eczema == "0") # no eczema
+ms_rare_filtered_subset_no_eczema <- subset_samples(ms_rare_filtered_subset_no_eczema,
+                                                    !is.na(sample_data(ms_rare_filtered_subset_no_eczema)$eczema) & 
+                                                    !is.na(sample_data(ms_rare_filtered_subset_no_eczema)$disease)) 
+# stats
+samp_dat_wdiv_no_eczema <- data.frame(sample_data(ms_rare_filtered_subset_no_eczema), estimate_richness(ms_rare_filtered_subset_no_eczema))
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset_no_eczema)), method="bray")
+adonis2(dm_bray ~ `disease`*disease, data=samp_dat_wdiv_no_eczema)
+# the disease shown to have a significant effect on microbial diversity for non-eczema patients
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset_no_eczema)), method="jaccard")
+adonis2(dm_jaccard ~ `disease`*disease, data=samp_dat_wdiv_no_eczema)
+# the disease shown to have a significant effect on microbial diversity for non-eczema patients
+```
+
+## F2 MS/No prescription subset 
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered,  prescription == "No") # no prescription 
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                              !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                              !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats on otc patients
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*otc_meds_numeric, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*otc_meds_numeric, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `otc_meds_numeric`*otc_meds_numeric, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `otc_meds_numeric`*otc_meds_numeric, data=samp_dat_wdiv)
+```
+
+## F2 MS/No OTC subset
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, otc_meds_numeric == "0") # no OTC
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats on otc patients
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `prescription`*prescription, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `prescription`*prescription, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `prescription`*prescription, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `prescription`*prescription, data=samp_dat_wdiv)
+```
+
+## F3 OTC subset - MS/no-prescription
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, otc_meds_numeric == "1") # taking otc
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  prescription == "No") # no prescription 
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                              !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                              !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats on otc patients
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+```
+
+## F3 Non-OTC subset - MS/no-prescription
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, otc_meds_numeric == "0") # no OTC
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  prescription == "No") # no prescription 
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats on otc patients
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+```
+
+## F3 Eczema subset - MS/no-prescription
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, eczema == "1") # has eczema
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  prescription == "No") # no prescription 
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                              !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                              !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+```
+
+## F3 Non-eczmea subset - MS/no-prescription
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, eczema == "0") # no eczema
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  prescription == "No") # no prescription 
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats 
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv) # significant
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `otc_meds_numeric`*eczema, data=samp_dat_wdiv) # significant
+```
+
+## FS3 Prescription subset - MS/no-OTC subset
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, prescription_numeric == 1) # taking prescription
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, otc_meds_numeric == "0") # not taking otc
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                              !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                              !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats on otc patients
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+```
+## FS3 Non-prescription subset - MS/no-OTC subset
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, otc_meds_numeric == "0") # no OTC
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, prescription_numeric == 0) # not taking prescription
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats on otc patients
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `prescription_numeric`*eczema, data=samp_dat_wdiv)
+```
+
+## FS3 Eczema subset - MS/no-OTC
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, eczema == "1") # has eczema
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  otc_meds_numeric == 0) # no otc 
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                              !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                              !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `prescription`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `prescription`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `prescription`*eczema, data=samp_dat_wdiv)
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `prescription`*eczema, data=samp_dat_wdiv)
+```
+
+## FS3 Non-eczmea subset - MS/no-OTC
+```{r}
+#subset data
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered, eczema == "0") # no eczema
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  otc_meds_numeric == 0) # no prescription 
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset,  disease == "MS") # has MS
+ms_rare_filtered_subset <- subset_samples(ms_rare_filtered_subset, 
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$eczema) &
+                                                 !is.na(sample_data(ms_rare_filtered_subset)$otc_meds_numeric))
+
+# stats 
+samp_dat_wdiv <- data.frame(sample_data(ms_rare_filtered_subset), estimate_richness(ms_rare_filtered_subset))
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=TRUE)
+adonis2(dm_unifrac ~ `prescription`*eczema, data=samp_dat_wdiv)
+
+dm_unifrac <- UniFrac(ms_rare_filtered_subset, weighted=FALSE)
+adonis2(dm_unifrac ~ `prescription`*eczema, data=samp_dat_wdiv)
+
+dm_bray <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="bray")
+adonis2(dm_bray ~ `prescription`*eczema, data=samp_dat_wdiv) 
+
+dm_jaccard <- vegdist(t(otu_table(ms_rare_filtered_subset)), method="jaccard")
+adonis2(dm_jaccard ~ `prescription`*eczema, data=samp_dat_wdiv) 
+```
+
+# Indicator taxa analysis
+```{r}
+## SUBSET FOR NO PRESCRIPTION ##
+
+# subset
+ms_rare_filtered_subset_ms <- subset_samples(ms_rare_filtered, disease == "MS")
+ms_rare_no_otc <- subset_samples(ms_rare_filtered_subset_ms, otc_meds == "No")
+ms_rare_otc <- subset_samples(ms_rare_filtered_subset_ms, otc_meds == "Yes")
+ms_no_rx <- subset_samples(ms_rare_filtered_subset_ms, rxnmeds_num_bool == "FALSE")
+
+## Table 1B
+ms_genus4 <- tax_glom(ms_no_rx, "Genus", NArm = FALSE)
+ms_genus_RA4 <- transform_sample_counts(ms_no_rx, fun=function(x) x/sum(x))
+
+taxtable4 <- tax_table(ms_no_rx) %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var="ASV")
+
+isa_output_norx <- multipatt(t(otu_table(ms_genus_RA4)), cluster = sample_data(ms_genus_RA4)$otc_meds)
+summary(isa_output_norx)
+
+isa_output_norx$sign %>%
+  rownames_to_column(var="ASV") %>%
+  left_join(taxtable4) %>%
+  filter(p.value<0.05) %>% View()
+
+## LOOKING AT ECZEMA ##
+
+## Table 1A
+ms_genus5 <- tax_glom(ms_rare_filtered_subset_ms, "Genus", NArm = FALSE)
+ms_genus_RA5 <- transform_sample_counts(ms_rare_filtered_subset_ms, fun=function(x) x/sum(x))
+
+taxtable5 <- tax_table(ms_rare_filtered_subset_ms) %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var="ASV")
+
+isa_output_e <- multipatt(t(otu_table(ms_genus_RA5)), cluster = sample_data(ms_genus_RA5)$eczema)
+summary(isa_output_e)
+
+isa_output_e$sign %>%
+  rownames_to_column(var="ASV") %>%
+  left_join(taxtable5) %>%
+  filter(p.value<0.05) %>% View()
+```
+
+# Core microbiome
+```{r}
+## EFFECT OF OTC WITH ECZEMA ## Fig 4B
+ms_eczema <- subset_samples(ms_rare_filtered_subset_ms, `eczema`=="1")
+ms_eczema_ms_RA <- transform_sample_counts(ms_eczema, fun=function(x) x/sum(x))
+
+ms_ms_no_otc <- subset_samples(ms_eczema_ms_RA, `otc_meds`=="No")
+ms_ms_otc <- subset_samples(ms_eczema_ms_RA, `otc_meds`=="Yes")
+
+no_otc_ASVs <- core_members(ms_ms_no_otc, detection=0, prevalence = 0.7)
+otc_ASVs <- core_members(ms_ms_otc, detection=0, prevalence = 0.7)
+
+no_otc_list <- core_members(ms_ms_no_otc, detection=0.001, prevalence = 0.50)
+otc_list <- core_members(ms_ms_otc, detection=0.001, prevalence = 0.50)
+otc_list_full <- list(OTC = otc_list, No_OTC = no_otc_list)
+
+first_venn <- ggVennDiagram(x = otc_list_full)
+first_venn
+
+## EFFECT OF OTC WITHOUT ECZEMA ## Fig 4A
+ms_no_eczema <- subset_samples(ms_rare_filtered_subset_ms, `eczema`=="0")
+ms_no_eczema_RA <- transform_sample_counts(ms_no_eczema, fun=function(x) x/sum(x))
+
+ms_no_otc <- subset_samples(ms_no_eczema_RA, `otc_meds`=="No")
+ms_otc <- subset_samples(ms_no_eczema_RA, `otc_meds`=="Yes")
+
+noe_no_otc_ASVs <- core_members(ms_no_otc, detection=0, prevalence = 0.7)
+noe_otc_ASVs <- core_members(ms_otc, detection=0, prevalence = 0.7)
+
+noe_no_otc_list <- core_members(ms_no_otc, detection=0.001, prevalence = 0.50)
+noe_otc_list <- core_members(ms_otc, detection=0.001, prevalence = 0.50)
+noe_otc_list_full <- list(OTC = noe_otc_list, No_OTC = noe_no_otc_list)
+
+second_venn <- ggVennDiagram(x = noe_otc_list_full)
+second_venn
+```
+
+
